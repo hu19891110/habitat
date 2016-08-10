@@ -55,6 +55,7 @@ use time::SteadyTime;
 use util::signals;
 use util::users as hab_users;
 use config::UpdateStrategy;
+use metrics::MetricRegistry;
 
 static LOGKEY: &'static str = "TP";
 static MINIMUM_LOOP_TIME_MS: i64 = 200;
@@ -120,6 +121,7 @@ pub struct Worker<'a> {
     pub pkg_updater: Option<PackageUpdaterActor>,
     /// The service supervisor
     pub supervisor: Arc<RwLock<Supervisor>>,
+    pub metrics: Arc<RwLock<MetricRegistry>>,
     pub return_state: Option<State>,
 }
 
@@ -180,7 +182,7 @@ impl<'a> Worker<'a> {
         let service_config_lock_1 = service_config_lock.clone();
 
         let supervisor = Arc::new(RwLock::new(Supervisor::new(package_ident, runtime_config)));
-
+        let metrics = Arc::new(RwLock::new(MetricRegistry::new()));
         let sidecar_ml = gossip_server.member_list.clone();
         let sidecar_rl = gossip_server.rumor_list.clone();
         let sidecar_cl = gossip_server.census_list.clone();
@@ -215,6 +217,7 @@ impl<'a> Worker<'a> {
                                                    sidecar_gfl),
             supervisor: supervisor,
             pkg_updater: pkg_updater,
+            metrics: metrics,
             return_state: None,
         })
     }
