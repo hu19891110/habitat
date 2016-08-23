@@ -29,18 +29,20 @@ use std::time::Duration;
 use std::sync::{Arc, RwLock};
 use std::net;
 
-use common::gossip_file::GossipFileList;
-use hcore::crypto::{default_cache_key_path, SymKey};
-use hcore::service::ServiceGroup;
+use time;
 use utp::{UtpListener, UtpSocket};
 
+use census::{Census, CensusEntry, CensusList};
+use common::gossip_file::GossipFileList;
+use election::ElectionList;
+use error::Result;
 use gossip::client::Client;
+use gossip::detector::Detector;
 use gossip::member::{Member, MemberList, Health};
 use gossip::rumor::{Peer, Protocol, Rumor, RumorList, Message};
-use gossip::detector::Detector;
-use election::ElectionList;
-use census::{Census, CensusEntry, CensusList};
-use error::Result;
+use hcore::crypto::{default_cache_key_path, SymKey};
+use hcore::service::ServiceGroup;
+use metrics::{Counter, MetricRegistry, Window};
 use util;
 
 static LOGKEY: &'static str = "GS";
@@ -71,6 +73,7 @@ pub struct Server {
     pub gossip_file_list: Arc<RwLock<GossipFileList>>,
     /// Our 'peer' entry, used to generate SWIM protocol messages.
     pub peer: Peer,
+    pub metrics: Arc<RwLock<MetricRegistry>>,
     /// An optional ring key used to encrypt messages with peers
     ring_key: Arc<Option<SymKey>>,
 }
@@ -84,9 +87,10 @@ impl Server {
                ring_name_with_rev: Option<String>,
                service: String,
                group: String,
-               organization: Option<String>,
+               organization: Option<String> ,
                exposes: Option<Vec<String>>,
-               port: Option<String>)
+               port: Option<String>,
+               metrics: Arc<RwLock<MetricRegistry>>)
                -> Server {
 
         let hostname = util::sys::hostname().unwrap_or(String::from("unknown"));
@@ -124,6 +128,7 @@ impl Server {
                 Arc::new(RwLock::new(GossipFileList::new(ServiceGroup::new(service,
                                                                            group,
                                                                            organization)))),
+            metrics: metrics,
             ring_key: Arc::new(ring_key),
         };
 
@@ -160,9 +165,10 @@ impl Server {
         let el = self.election_list.clone();
         let gfl = self.gossip_file_list.clone();
         let listener = try!(UtpListener::bind(&self.listen[..]));
+        let metrics = self.metrics.clone();
         let _t = thread::Builder::new()
             .name("inbound".to_string())
-            .spawn(move || inbound(listener, key, my_peer, ml, rl, cl, detector, el, gfl));
+            .spawn(move || inbound(listener, key, my_peer, ml, rl, cl, detector, el, gfl, metrics));
         Ok(())
     }
 
@@ -261,14 +267,42 @@ pub fn inbound(listener: UtpListener,
                census_list: Arc<RwLock<CensusList>>,
                detector: Arc<RwLock<Detector>>,
                election_list: Arc<RwLock<ElectionList>>,
-               gossip_file_list: Arc<RwLock<GossipFileList>>) {
-    let pool = ThreadPool::new(INBOUND_MAX_THREADS);
+               gossip_file_list: Arc<RwLock<GossipFileList>>,
+               metrics: Arc<RwLock<MetricRegistry>>) {
+
+    let mut pool = ThreadPool::new(INBOUND_MAX_THREADS);
     for connection in listener.incoming() {
+
+        //{
+        //    let avg = metrics.read().unwrap().window_avg(Window::UTPReceiveTime);
+        //    println!("Average = {}", avg);
+        //    if avg > 1_000_000_000 && !tweaked{
+        //        println!("Detected a slow thread, bumping up pool size");
+        //        let new_count = pool.active_count() * 2;
+        //        pool.set_num_threads(new_count);
+        //        tweaked = true;
+        //    }
+        //}
+
+        let mut tweaked = false;
+        let mut sleeps = 0;
         loop {
+            println!("ACTIVE/MAX = {}/{}", pool.active_count(), pool.max_count());
+
             if pool.active_count() == pool.max_count() {
-                info!("{} of {} inbound threads full; delaying this round",
-                      pool.active_count(),
-                      pool.max_count());
+
+                if sleeps == 10 && tweaked == false {
+                    let new_count = pool.active_count() * 2;
+                    pool.set_num_threads(new_count);
+                    tweaked = true;
+                    println!("BUMPED POOL SIZE");
+                } else {
+                    println!("{} of {} inbound threads full; delaying this round",
+                        pool.active_count(),
+                        pool.max_count());
+                    thread::sleep(Duration::from_millis(1000));
+                    sleeps += 1;
+                }
                 continue;
             } else {
                 break;
@@ -276,7 +310,7 @@ pub fn inbound(listener: UtpListener,
         }
         match connection {
             Ok((socket, src)) => {
-                debug!("Inbound connection from {:?}; {} of {} slots used",
+                println!("Inbound connection from {:?}; {} of {} slots used",
                        src,
                        pool.active_count(),
                        pool.max_count());
@@ -289,8 +323,8 @@ pub fn inbound(listener: UtpListener,
                 let d1 = detector.clone();
                 let el = election_list.clone();
                 let gfl = gossip_file_list.clone();
-
-                pool.execute(move || receive(socket, src, key, my_peer, ml, rl, cl, d1, el, gfl));
+                let metrics = metrics.clone();
+                pool.execute(move || receive(socket, src, key, my_peer, ml, rl, cl, d1, el, gfl, metrics));
             }
             _ => {}
         }
@@ -315,7 +349,7 @@ pub fn inbound(listener: UtpListener,
 /// ## PingReq(Peer, RumorList)
 /// * Create a connection to the requested Peer
 /// * Forward along the RumorList to that Peer as a Proxy Ping.
-fn receive(socket: UtpSocket,
+fn receive(mut socket: UtpSocket,
            src: net::SocketAddr,
            ring_key: Arc<Option<SymKey>>,
            my_peer: Peer,
@@ -324,9 +358,21 @@ fn receive(socket: UtpSocket,
            census_list: Arc<RwLock<CensusList>>,
            detector: Arc<RwLock<Detector>>,
            election_list: Arc<RwLock<ElectionList>>,
-           gossip_file_list: Arc<RwLock<GossipFileList>>) {
+           gossip_file_list: Arc<RwLock<GossipFileList>>,
+           metrics: Arc<RwLock<MetricRegistry>>) {
+    let start = time::precise_time_ns();
     let mut client = Client::from_socket(socket, ring_key.deref().as_ref());
-    let msg = match client.recv_message() {
+
+    let result = client.recv_message();
+    let finish = time::precise_time_ns();
+    let diff = finish - start;
+    //metrics.write().unwrap().window_push(Window::UTPReceiveTime, diff);
+
+    println!("Diff = {}", diff);
+    if diff > 1_000_000_000 {
+        println!("SLOW READ");
+    }
+    let msg = match result {
         Ok(msg) => msg,
         Err(e) => {
             debug!("Failed to receive a message: {:#?} {:#?}",
@@ -335,12 +381,13 @@ fn receive(socket: UtpSocket,
             return;
         }
     };
-
-    debug!("#{:?} protocol {:?}", src, msg);
+    //metrics.write().unwrap().incr(Counter::UTPMessagesReceived);
+    //println!("#{:?} protocol {:?}", src, msg);
 
     match msg {
         Protocol::Ping(from_peer, remote_rumor_list) => {
-            debug!("Ping from {:?}", from_peer);
+            //debug!("Ping from {:?}", from_peer);
+            println!("Received Ping");
 
             // Who are we responding to? The peer, or are we proxied through someone else?
             let respond_to = {
@@ -401,6 +448,7 @@ fn receive(socket: UtpSocket,
                            gossip_file_list);
         }
         Protocol::Ack(mut from_peer, remote_rumor_list) => {
+            println!("Received Ack");
             // If this is a proxy ack, forward the results on
             if from_peer.proxy_to.is_some() {
                 debug!("Proxy Ack for {:?}", from_peer);
@@ -436,6 +484,7 @@ fn receive(socket: UtpSocket,
             }
         }
         Protocol::PingReq(from_peer, remote_rumor_list) => {
+            println!("Received PingReq");
             debug!("PingReq from {:?}", from_peer);
             let proxy_to = match from_peer.proxy_to {
                 Some(ref proxy_to) => proxy_to.clone(),
@@ -464,6 +513,7 @@ fn receive(socket: UtpSocket,
             }
         }
         Protocol::Inject(remote_rumor_list) => {
+            println!("Received inject");
             debug!("Incoming rumor injection: {:?}", remote_rumor_list);
             process_rumors(remote_rumor_list,
                            rumor_list,
@@ -609,13 +659,15 @@ pub fn outbound(ring_key: Arc<Option<SymKey>>,
             let mp1 = my_peer.clone();
             let d1 = detector.clone();
 
+            println!("Sending ping");
+
             debug!("Sending ping to {:?}; {} of {} outbound slots",
                    member,
                    pool.active_count(),
                    pool.max_count());
             pool.execute(move || send_outbound(key1, mp1, member, rl1, ml1, d1));
         } else {
-            debug!("Skipping ping of {} due to already running request",
+            println!("Skipping ping of {} due to already running request",
                    member.id)
         }
     }

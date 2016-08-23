@@ -44,7 +44,8 @@ impl<'a> Client<'a> {
     ///
     /// * If we cannot connect the UTP socket
     pub fn new<A: ToSocketAddrs>(dst: A, ring_key: Option<&'a SymKey>) -> Result<Client> {
-        let socket = try!(UtpSocket::connect(dst));
+        let mut socket = try!(UtpSocket::connect(dst));
+        //socket.set_read_timeout(Some(500));
         Ok(Client {
             socket: socket,
             ring_key: ring_key,
@@ -52,7 +53,8 @@ impl<'a> Client<'a> {
     }
 
     /// Create a new client from a `UtpSocket`
-    pub fn from_socket(socket: UtpSocket, ring_key: Option<&'a SymKey>) -> Client {
+    pub fn from_socket(mut socket: UtpSocket, ring_key: Option<&'a SymKey>) -> Client {
+        //socket.set_read_timeout(Some(500));
         Client {
             socket: socket,
             ring_key: ring_key,
