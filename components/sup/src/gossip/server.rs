@@ -290,19 +290,10 @@ pub fn inbound(listener: UtpListener,
             println!("ACTIVE/MAX = {}/{}", pool.active_count(), pool.max_count());
 
             if pool.active_count() == pool.max_count() {
-
-                if sleeps == 10 && tweaked == false {
-                    let new_count = pool.active_count() * 2;
-                    pool.set_num_threads(new_count);
-                    tweaked = true;
-                    println!("BUMPED POOL SIZE");
-                } else {
-                    println!("{} of {} inbound threads full; delaying this round",
+                    debug!("{} of {} inbound threads full; delaying this round",
                         pool.active_count(),
                         pool.max_count());
                     thread::sleep(Duration::from_millis(1000));
-                    sleeps += 1;
-                }
                 continue;
             } else {
                 break;
@@ -310,7 +301,7 @@ pub fn inbound(listener: UtpListener,
         }
         match connection {
             Ok((socket, src)) => {
-                println!("Inbound connection from {:?}; {} of {} slots used",
+                debug!("Inbound connection from {:?}; {} of {} slots used",
                        src,
                        pool.active_count(),
                        pool.max_count());
@@ -330,6 +321,7 @@ pub fn inbound(listener: UtpListener,
         }
     }
 }
+
 
 /// Receives a message from the inbound listener.
 ///
@@ -367,7 +359,6 @@ fn receive(mut socket: UtpSocket,
     let finish = time::precise_time_ns();
     let diff = finish - start;
     //metrics.write().unwrap().window_push(Window::UTPReceiveTime, diff);
-
     println!("Diff = {}", diff);
     if diff > 1_000_000_000 {
         println!("SLOW READ");
@@ -387,7 +378,8 @@ fn receive(mut socket: UtpSocket,
     match msg {
         Protocol::Ping(from_peer, remote_rumor_list) => {
             //debug!("Ping from {:?}", from_peer);
-            println!("Received Ping");
+            //println!("from_peer {:?}", &from_peer);
+            //println!("Received Ping");
 
             // Who are we responding to? The peer, or are we proxied through someone else?
             let respond_to = {
@@ -448,7 +440,7 @@ fn receive(mut socket: UtpSocket,
                            gossip_file_list);
         }
         Protocol::Ack(mut from_peer, remote_rumor_list) => {
-            println!("Received Ack");
+            //println!("Received Ack");
             // If this is a proxy ack, forward the results on
             if from_peer.proxy_to.is_some() {
                 debug!("Proxy Ack for {:?}", from_peer);
@@ -484,7 +476,7 @@ fn receive(mut socket: UtpSocket,
             }
         }
         Protocol::PingReq(from_peer, remote_rumor_list) => {
-            println!("Received PingReq");
+            //println!("Received PingReq");
             debug!("PingReq from {:?}", from_peer);
             let proxy_to = match from_peer.proxy_to {
                 Some(ref proxy_to) => proxy_to.clone(),
@@ -513,7 +505,7 @@ fn receive(mut socket: UtpSocket,
             }
         }
         Protocol::Inject(remote_rumor_list) => {
-            println!("Received inject");
+            //println!("Received inject");
             debug!("Incoming rumor injection: {:?}", remote_rumor_list);
             process_rumors(remote_rumor_list,
                            rumor_list,

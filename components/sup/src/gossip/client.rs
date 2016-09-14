@@ -44,8 +44,8 @@ impl<'a> Client<'a> {
     ///
     /// * If we cannot connect the UTP socket
     pub fn new<A: ToSocketAddrs>(dst: A, ring_key: Option<&'a SymKey>) -> Result<Client> {
-        let mut socket = try!(UtpSocket::connect(dst));
-        //socket.set_read_timeout(Some(500));
+        let mut socket = try!(UtpSocket::connect_connect_with_options(dst,0));
+        //socket.set_read_timeout(Some(100));
         Ok(Client {
             socket: socket,
             ring_key: ring_key,
@@ -54,7 +54,7 @@ impl<'a> Client<'a> {
 
     /// Create a new client from a `UtpSocket`
     pub fn from_socket(mut socket: UtpSocket, ring_key: Option<&'a SymKey>) -> Client {
-        //socket.set_read_timeout(Some(500));
+        //socket.set_read_timeout(Some(100));
         Client {
             socket: socket,
             ring_key: ring_key,
@@ -146,3 +146,19 @@ impl<'a> Client<'a> {
         Ok(())
     }
 }
+
+
+impl<'a> Drop for Client<'a> {
+    fn drop(&mut self) {
+        println!("Dropping client");
+        match self.socket.close() {
+            Ok(()) => {
+                println!("SOCKET CLOSED");
+            }
+            Err(e) => {
+                println!("Can't close socket: {}", e);
+            }
+        }
+    }
+}
+
