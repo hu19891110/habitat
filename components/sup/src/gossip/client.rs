@@ -154,7 +154,6 @@ impl<'a> Client<'a> {
 
 impl<'a> Drop for Client<'a> {
     fn drop(&mut self) {
-        println!("Dropping client");
         match self.socket.close() {
             Ok(()) => {
                 ()

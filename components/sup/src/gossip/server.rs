@@ -361,7 +361,7 @@ fn receive(mut socket: UtpSocket,
     let finish = time::precise_time_ns();
     let diff = finish - start;
     //metrics.write().unwrap().window_push(Window::UTPReceiveTime, diff);
-    println!("Diff = {}", diff);
+    //println!("Diff = {}", diff);
     if diff > 1_000_000_000 {
         println!("SLOW READ");
     }
@@ -638,6 +638,7 @@ pub fn outbound(ring_key: Arc<Option<SymKey>>,
         let isolated = {
             member_list.read().unwrap().isolated(&my_peer.member_id)
         };
+
         if member.health == Health::Confirmed && !member.permanent && !isolated {
             continue;
         }
@@ -818,7 +819,7 @@ pub fn failure_detector(ring_key: Arc<Option<SymKey>>,
             }
             let confirmed_member = {
                 let ml = member_list.read().unwrap();
-                ml.get(&member_id).unwrap().clone()
+                ml.get_confirmed(&member_id).unwrap().clone()
             };
             {
                 let mut rl = rumor_list.write().unwrap();

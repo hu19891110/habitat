@@ -28,7 +28,7 @@ use gossip::member::MemberId;
 pub static REQUEST_FAILURE_TIME: i64 = 200;
 
 /// How long before we declare this member all the way gone
-pub static REQUEST_CONFIRM_TIME: i64 = 10000;
+pub static REQUEST_CONFIRM_TIME: i64 = 5000;
 
 /// The status of a request
 #[derive(Debug, RustcEncodable, RustcDecodable, PartialEq, Eq)]
