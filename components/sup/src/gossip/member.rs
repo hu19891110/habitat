@@ -165,12 +165,29 @@ impl MemberList {
     ///
     /// This ensures that every member gets touched in each gossip round.
     pub fn next(&mut self) -> Option<&Member> {
+
+        // TODO: SKIP CONFIRMED MEMBERS
+        // SHOULD THEY BE IN THEIR OWN LIST?
+
+        // TODO: look at the memberlist instead of order
         if self.order.len() == 0 {
             return None;
         };
+
+        // BTreeMap?
+
+        //let alive_members =
+        //    self.members.iter().filter(|&(ref mid, ref m)| m.health != Health::Confirmed).collect();
+
         if self.position < self.order.len() {
             let ref member = self.members.get(&self.order[self.position]).unwrap();
             self.position = self.position + 1;
+            match member.health {
+                Health::Confirmed => {
+                    println!("SELECTED CONFIRMED MEMBER");
+                }
+                _ => ()
+            }
             Some(member)
         } else {
             self.position = 0;
@@ -178,6 +195,7 @@ impl MemberList {
             rng.shuffle(&mut self.order);
             self.next()
         }
+
     }
 
     /// Given an incoming member entry, process it. If we have a record for the member already, we
@@ -237,6 +255,7 @@ impl MemberList {
         }
     }
 
+    // TODO: DP filter out Confirmed!
     /// Selects PINGREQ_MEMBERS number of members to use as targets for a PingReq. The members are
     /// chosen completely randomly.
     pub fn pingreq_targets(&self, myself: &MemberId, target: &MemberId) -> Vec<Member> {

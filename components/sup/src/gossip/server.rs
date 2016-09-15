@@ -219,6 +219,8 @@ impl Server {
                               fail_after);
                 }
             }
+            // TODO
+            panic!("Can't connect to peer");
         }
         Ok(())
     }

@@ -1228,11 +1228,11 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 [[package]]
 name = "temp_utp"
 version = "0.8.1"
-source = "git+https://github.com/metadave/rust-utp.git?branch=dp_configurable_retries#a095a19bc2924fa87a4e08a06507f243d35ba017"
+source = "git+https://github.com/metadave/rust-utp.git?branch=dp_configurable_retries#8f9be5aa39e26c3fce749ef55ac8cf69f1020b5f"
 dependencies = [
  "env_logger 0.3.4 (registry+https://github.com/rust-lang/crates.io-index)",
  "log 0.3.6 (registry+https://github.com/rust-lang/crates.io-index)",
- "num 0.1.34 (registry+https://github.com/rust-lang/crates.io-index)",
+ "num 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand 0.3.14 (registry+https://github.com/rust-lang/crates.io-index)",
  "time 0.1.35 (registry+https://github.com/rust-lang/crates.io-index)",
 ]

@@ -25,7 +25,7 @@ use time::{SteadyTime, Duration};
 use gossip::member::MemberId;
 
 /// Failure time in milliseconds
-pub static REQUEST_FAILURE_TIME: i64 = 5000;
+pub static REQUEST_FAILURE_TIME: i64 = 200;
 
 /// How long before we declare this member all the way gone
 pub static REQUEST_CONFIRM_TIME: i64 = 10000;
@@ -141,6 +141,9 @@ impl Detector {
         for member_id in confirmed_members.iter() {
             self.open_requests.remove(member_id);
         }
+        debug!("pingreq_members {}", &pingreq_members.len());
+        debug!("failed_members {}", &failed_members.len());
+        debug!("confirmed_members {}", &confirmed_members.len());
         (pingreq_members, failed_members, confirmed_members)
     }
 }
