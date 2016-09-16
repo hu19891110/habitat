@@ -23,7 +23,6 @@ use std::fmt;
 use std::ops::Deref;
 
 use rand::{thread_rng, Rng};
-// TODO: This function appears to be unused
 use uuid::Uuid;
 
 use gossip::lamport_clock::LamportClock;
@@ -134,7 +133,6 @@ impl fmt::Display for Member {
 #[derive(Debug, RustcDecodable, RustcEncodable)]
 pub struct MemberList {
     members: HashMap<MemberId, Member>,
-    confirmed_members: HashMap<MemberId, Member>,
     position: usize,
     order: Vec<Uuid>,
     pub my_id: MemberId,
@@ -145,7 +143,6 @@ impl MemberList {
     pub fn new(my_member: Member) -> MemberList {
         let mut ml = MemberList {
             members: HashMap::new(),
-            confirmed_members: HashMap::new(),
             position: 0,
             order: Vec::new(),
             my_id: my_member.id.clone(),
@@ -157,12 +154,6 @@ impl MemberList {
     /// Insert a member into the list.
     pub fn insert(&mut self, member: Member) {
         let oid = member.id.clone();
-
-        if self.confirmed_members.contains_key(&oid) {
-            println!("ALREADY CONFIRMED MEMBER");
-            return;
-        }
-        // TODO: check to see if we are already in confirmed_members
         if let None = self.members.insert(member.id.clone(), member) {
             self.order.push(oid);
         }
@@ -174,30 +165,12 @@ impl MemberList {
     ///
     /// This ensures that every member gets touched in each gossip round.
     pub fn next(&mut self) -> Option<&Member> {
-
-        // TODO: SKIP CONFIRMED MEMBERS
-        // SHOULD THEY BE IN THEIR OWN LIST?
-
-        // TODO: look at the memberlist instead of order
         if self.order.len() == 0 {
             return None;
         };
-
-        // BTreeMap?
-
-        //let alive_members =
-        //    self.members.iter().filter(|&(ref mid, ref m)| m.health != Health::Confirmed).collect();
-
         if self.position < self.order.len() {
             let ref member = self.members.get(&self.order[self.position]).unwrap();
             self.position = self.position + 1;
-            match member.health {
-                Health::Confirmed => {
-                    println!("SELECTED CONFIRMED MEMBER");
-                    return None
-                }
-                _ => ()
-            }
             Some(member)
         } else {
             self.position = 0;
@@ -205,7 +178,6 @@ impl MemberList {
             rng.shuffle(&mut self.order);
             self.next()
         }
-
     }
 
     /// Given an incoming member entry, process it. If we have a record for the member already, we
@@ -215,11 +187,6 @@ impl MemberList {
     /// Either way, we return true if we added a new member or mutated an existing one; false if we
     /// did nothing.
     pub fn process(&mut self, remote_member: Member) -> bool {
-
-        if self.confirmed_members.contains_key(&remote_member.id) {
-            return false;
-        }
-
         // This is strange - rust won't let this be an else.
         if let Some(mut current_member) = self.members.get_mut(&remote_member.id) {
             return current_member.update_via(&self.my_id, remote_member);
@@ -262,27 +229,14 @@ impl MemberList {
 
     /// Set a members health to Confirmed.
     pub fn confirm(&mut self, member_id: &MemberId) {
-        if ! self.members.contains_key(member_id) {
-            debug!("Confirming a member_id that doesn't exist or is already confirmed");
-            return;
-        }
-
-        {
-            let mut member = self.members.get_mut(member_id).unwrap();
+        if let Some(mut member) = self.members.get_mut(member_id) {
             if member.health != Health::Confirmed {
                 warn!("Member {} is confirmed dead", member_id);
                 member.health = Health::Confirmed;
             }
         }
-
-        let order_index = self.order.iter().position(|id| id == member_id).unwrap();
-        self.order.remove(order_index);
-
-        let confirmed_member = self.members.remove(member_id).unwrap();
-        self.confirmed_members.insert(member_id.clone(), confirmed_member);
     }
 
-    // TODO: DP filter out Confirmed!
     /// Selects PINGREQ_MEMBERS number of members to use as targets for a PingReq. The members are
     /// chosen completely randomly.
     pub fn pingreq_targets(&self, myself: &MemberId, target: &MemberId) -> Vec<Member> {
@@ -299,14 +253,9 @@ impl MemberList {
         results
     }
 
-    // TODO: This function appears to be unused
     /// Return an reference to a given member, if it exists in the MemberList.
-    //pub fn getit(&self, member_id: &MemberId) -> Option<&Member> {
-    //    self.members.get(member_id)
-   // }
-
-    pub fn get_confirmed(&self, member_id: &MemberId) -> Option<&Member> {
-        self.confirmed_members.get(member_id)
+    pub fn get(&self, member_id: &MemberId) -> Option<&Member> {
+        self.members.get(member_id)
     }
 
     /// Return all the members whose health is Suspect.

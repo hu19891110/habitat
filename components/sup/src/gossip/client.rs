@@ -18,13 +18,13 @@
 //! encoded with json.
 //!
 
-use std::net::{UdpSocket, ToSocketAddrs};
+use std::net::ToSocketAddrs;
 use std::str;
 
 use common::wire_message::WireMessage;
 use hcore::crypto::SymKey;
 use rustc_serialize::json;
-//use utp::UtpSocket;
+use utp::UtpSocket;
 
 use error::Result;
 use gossip::rumor::{Protocol, Peer, RumorList};
@@ -33,7 +33,7 @@ pub const BUFFER_SIZE: usize = 10000;
 
 /// A Gossip Client.
 pub struct Client<'a> {
-    pub socket: UdpSocket,
+    pub socket: UtpSocket,
     ring_key: Option<&'a SymKey>,
 }
 
@@ -44,8 +44,7 @@ impl<'a> Client<'a> {
     ///
     /// * If we cannot connect the UTP socket
     pub fn new<A: ToSocketAddrs>(dst: A, ring_key: Option<&'a SymKey>) -> Result<Client> {
-        // try to connect at least once, only wait up to 100ms to timeout
-        let mut socket = try!(UdpSocket::connect(dst));
+        let socket = try!(UtpSocket::connect(dst));
         Ok(Client {
             socket: socket,
             ring_key: ring_key,
@@ -53,9 +52,7 @@ impl<'a> Client<'a> {
     }
 
     /// Create a new client from a `UtpSocket`
-    pub fn from_socket(mut socket: UdpSocket, ring_key: Option<&'a SymKey>) -> Client {
-        println!("Connection from socket");
-        //socket.set_read_timeout(Some(100));
+    pub fn from_socket(socket: UtpSocket, ring_key: Option<&'a SymKey>) -> Client {
         Client {
             socket: socket,
             ring_key: ring_key,
@@ -147,19 +144,3 @@ impl<'a> Client<'a> {
         Ok(())
     }
 }
-
-
-impl<'a> Drop for Client<'a> {
-    fn drop(&mut self) {
-        match self.socket.close() {
-            Ok(()) => {
-                ()
-                //println!("SOCKET CLOSED");
-            }
-            Err(e) => {
-                println!("Can't close socket: {}", e);
-            }
-        }
-    }
-}
-

@@ -29,7 +29,7 @@ url = "*"
 iron = "*"
 router = "*"
 time = "*"
-temp_utp = { git = "https://github.com/metadave/rust-utp.git", branch = "dp_configurable_retries" }
+temp_utp = "*"
 rand = "*"
 threadpool = "*"
 openssl = "*"

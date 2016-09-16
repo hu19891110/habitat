@@ -27,22 +27,20 @@ use std::thread;
 use std::ops::Deref;
 use std::time::Duration;
 use std::sync::{Arc, RwLock};
-use std::net::{self, UdpSocket};
+use std::net;
 
-use time;
-use utp::{UtpListener, UtpSocket};
-
-use census::{Census, CensusEntry, CensusList};
 use common::gossip_file::GossipFileList;
-use election::ElectionList;
-use error::Result;
-use gossip::client::Client;
-use gossip::detector::Detector;
-use gossip::member::{Member, MemberList, Health};
-use gossip::rumor::{Peer, Protocol, Rumor, RumorList, Message};
 use hcore::crypto::{default_cache_key_path, SymKey};
 use hcore::service::ServiceGroup;
-use metrics::{Counter, MetricRegistry, Window};
+use utp::{UtpListener, UtpSocket};
+
+use gossip::client::Client;
+use gossip::member::{Member, MemberList, Health};
+use gossip::rumor::{Peer, Protocol, Rumor, RumorList, Message};
+use gossip::detector::Detector;
+use election::ElectionList;
+use census::{Census, CensusEntry, CensusList};
+use error::Result;
 use util;
 
 static LOGKEY: &'static str = "GS";
@@ -73,7 +71,6 @@ pub struct Server {
     pub gossip_file_list: Arc<RwLock<GossipFileList>>,
     /// Our 'peer' entry, used to generate SWIM protocol messages.
     pub peer: Peer,
-    pub metrics: Arc<RwLock<MetricRegistry>>,
     /// An optional ring key used to encrypt messages with peers
     ring_key: Arc<Option<SymKey>>,
 }
@@ -87,10 +84,9 @@ impl Server {
                ring_name_with_rev: Option<String>,
                service: String,
                group: String,
-               organization: Option<String> ,
+               organization: Option<String>,
                exposes: Option<Vec<String>>,
-               port: Option<String>,
-               metrics: Arc<RwLock<MetricRegistry>>)
+               port: Option<String>)
                -> Server {
 
         let hostname = util::sys::hostname().unwrap_or(String::from("unknown"));
@@ -128,7 +124,6 @@ impl Server {
                 Arc::new(RwLock::new(GossipFileList::new(ServiceGroup::new(service,
                                                                            group,
                                                                            organization)))),
-            metrics: metrics,
             ring_key: Arc::new(ring_key),
         };
 
@@ -164,11 +159,10 @@ impl Server {
         let detector = self.detector.clone();
         let el = self.election_list.clone();
         let gfl = self.gossip_file_list.clone();
-        let listener = try!(UdpSocket::bind(&self.listen[..]));
-        let metrics = self.metrics.clone();
+        let listener = try!(UtpListener::bind(&self.listen[..]));
         let _t = thread::Builder::new()
             .name("inbound".to_string())
-            .spawn(move || inbound(listener, key, my_peer, ml, rl, cl, detector, el, gfl, metrics));
+            .spawn(move || inbound(listener, key, my_peer, ml, rl, cl, detector, el, gfl));
         Ok(())
     }
 
@@ -219,8 +213,6 @@ impl Server {
                               fail_after);
                 }
             }
-            // TODO
-            panic!("Can't connect to peer");
         }
         Ok(())
     }
@@ -261,7 +253,7 @@ impl Server {
 /// INBOUND_MAX_THREADS concurrent requests.
 ///
 /// New requests are handled by passing them to `receive`.
-pub fn inbound(listener: UdpSocket,
+pub fn inbound(listener: UtpListener,
                ring_key: Arc<Option<SymKey>>,
                my_peer: Peer,
                member_list: Arc<RwLock<MemberList>>,
@@ -269,38 +261,21 @@ pub fn inbound(listener: UdpSocket,
                census_list: Arc<RwLock<CensusList>>,
                detector: Arc<RwLock<Detector>>,
                election_list: Arc<RwLock<ElectionList>>,
-               gossip_file_list: Arc<RwLock<GossipFileList>>,
-               metrics: Arc<RwLock<MetricRegistry>>) {
-
-    let mut pool = ThreadPool::new(INBOUND_MAX_THREADS);
-
-    // set_read_timeout
-    // set_write_timeout
-    loop {
-        let mut buf = [0; 65507];
-        let (amt, src) = try!(listener.recv_from(buf));
-        println!("READ {} bytes from UDP connection {:?}", &amt, &src);
-        let mut tweaked = false;
-        let mut sleeps = 0;
-
-        // check thread pool
+               gossip_file_list: Arc<RwLock<GossipFileList>>) {
+    let pool = ThreadPool::new(INBOUND_MAX_THREADS);
+    for connection in listener.incoming() {
         loop {
-            println!("ACTIVE/MAX = {}/{}", pool.active_count(), pool.max_count());
-
             if pool.active_count() == pool.max_count() {
-                    debug!("{} of {} inbound threads full; delaying this round",
-                        pool.active_count(),
-                        pool.max_count());
-                    thread::sleep(Duration::from_millis(1000));
+                info!("{} of {} inbound threads full; delaying this round",
+                      pool.active_count(),
+                      pool.max_count());
                 continue;
             } else {
                 break;
             }
         }
-
-        /*
         match connection {
-            Ok((amt, src)) => {
+            Ok((socket, src)) => {
                 debug!("Inbound connection from {:?}; {} of {} slots used",
                        src,
                        pool.active_count(),
@@ -314,18 +289,13 @@ pub fn inbound(listener: UdpSocket,
                 let d1 = detector.clone();
                 let el = election_list.clone();
                 let gfl = gossip_file_list.clone();
-                let metrics = metrics.clone();
 
-                let response_socket = try!(UdpSocket::bind(""));
-
-                pool.execute(move || receive(socket, src, key, my_peer, ml, rl, cl, d1, el, gfl, metrics));
+                pool.execute(move || receive(socket, src, key, my_peer, ml, rl, cl, d1, el, gfl));
             }
             _ => {}
         }
-        */
     }
 }
-
 
 /// Receives a message from the inbound listener.
 ///
@@ -345,7 +315,7 @@ pub fn inbound(listener: UdpSocket,
 /// ## PingReq(Peer, RumorList)
 /// * Create a connection to the requested Peer
 /// * Forward along the RumorList to that Peer as a Proxy Ping.
-fn receive(mut socket: UdpSocket,
+fn receive(socket: UtpSocket,
            src: net::SocketAddr,
            ring_key: Arc<Option<SymKey>>,
            my_peer: Peer,
@@ -354,20 +324,9 @@ fn receive(mut socket: UdpSocket,
            census_list: Arc<RwLock<CensusList>>,
            detector: Arc<RwLock<Detector>>,
            election_list: Arc<RwLock<ElectionList>>,
-           gossip_file_list: Arc<RwLock<GossipFileList>>,
-           metrics: Arc<RwLock<MetricRegistry>>) {
-    let start = time::precise_time_ns();
+           gossip_file_list: Arc<RwLock<GossipFileList>>) {
     let mut client = Client::from_socket(socket, ring_key.deref().as_ref());
-
-    let result = client.recv_message();
-    let finish = time::precise_time_ns();
-    let diff = finish - start;
-    //metrics.write().unwrap().window_push(Window::UTPReceiveTime, diff);
-    //println!("Diff = {}", diff);
-    if diff > 1_000_000_000 {
-        println!("SLOW READ");
-    }
-    let msg = match result {
+    let msg = match client.recv_message() {
         Ok(msg) => msg,
         Err(e) => {
             debug!("Failed to receive a message: {:#?} {:#?}",
@@ -376,14 +335,12 @@ fn receive(mut socket: UdpSocket,
             return;
         }
     };
-    //metrics.write().unwrap().incr(Counter::UTPMessagesReceived);
-    //println!("#{:?} protocol {:?}", src, msg);
+
+    debug!("#{:?} protocol {:?}", src, msg);
 
     match msg {
         Protocol::Ping(from_peer, remote_rumor_list) => {
-            //debug!("Ping from {:?}", from_peer);
-            //println!("from_peer {:?}", &from_peer);
-            //println!("Received Ping");
+            debug!("Ping from {:?}", from_peer);
 
             // Who are we responding to? The peer, or are we proxied through someone else?
             let respond_to = {
@@ -444,7 +401,6 @@ fn receive(mut socket: UdpSocket,
                            gossip_file_list);
         }
         Protocol::Ack(mut from_peer, remote_rumor_list) => {
-            //println!("Received Ack");
             // If this is a proxy ack, forward the results on
             if from_peer.proxy_to.is_some() {
                 debug!("Proxy Ack for {:?}", from_peer);
@@ -480,7 +436,6 @@ fn receive(mut socket: UdpSocket,
             }
         }
         Protocol::PingReq(from_peer, remote_rumor_list) => {
-            //println!("Received PingReq");
             debug!("PingReq from {:?}", from_peer);
             let proxy_to = match from_peer.proxy_to {
                 Some(ref proxy_to) => proxy_to.clone(),
@@ -509,7 +464,6 @@ fn receive(mut socket: UdpSocket,
             }
         }
         Protocol::Inject(remote_rumor_list) => {
-            //println!("Received inject");
             debug!("Incoming rumor injection: {:?}", remote_rumor_list);
             process_rumors(remote_rumor_list,
                            rumor_list,
@@ -640,7 +594,6 @@ pub fn outbound(ring_key: Arc<Option<SymKey>>,
         let isolated = {
             member_list.read().unwrap().isolated(&my_peer.member_id)
         };
-
         if member.health == Health::Confirmed && !member.permanent && !isolated {
             continue;
         }
@@ -656,15 +609,13 @@ pub fn outbound(ring_key: Arc<Option<SymKey>>,
             let mp1 = my_peer.clone();
             let d1 = detector.clone();
 
-            println!("Sending ping");
-
             debug!("Sending ping to {:?}; {} of {} outbound slots",
                    member,
                    pool.active_count(),
                    pool.max_count());
             pool.execute(move || send_outbound(key1, mp1, member, rl1, ml1, d1));
         } else {
-            println!("Skipping ping of {} due to already running request",
+            debug!("Skipping ping of {} due to already running request",
                    member.id)
         }
     }
@@ -821,7 +772,7 @@ pub fn failure_detector(ring_key: Arc<Option<SymKey>>,
             }
             let confirmed_member = {
                 let ml = member_list.read().unwrap();
-                ml.get_confirmed(&member_id).unwrap().clone()
+                ml.get(&member_id).unwrap().clone()
             };
             {
                 let mut rl = rumor_list.write().unwrap();

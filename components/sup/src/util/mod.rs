@@ -13,11 +13,10 @@
 // limitations under the License.
 
 pub mod convert;
-pub mod event;
 pub mod handlebars_helpers;
 pub mod path;
-pub mod signals;
 pub mod sys;
+pub mod signals;
 pub mod users;
 
 use std::net::Ipv4Addr;

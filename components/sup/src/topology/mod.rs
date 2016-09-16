@@ -55,8 +55,6 @@ use time::SteadyTime;
 use util::signals;
 use util::users as hab_users;
 use config::UpdateStrategy;
-use metrics::{MetricRegistry, Window};
-use util::event::{EventMessage, EventSink, EventSinkActor, HabEvent};
 
 static LOGKEY: &'static str = "TP";
 static MINIMUM_LOOP_TIME_MS: i64 = 200;
@@ -122,8 +120,6 @@ pub struct Worker<'a> {
     pub pkg_updater: Option<PackageUpdaterActor>,
     /// The service supervisor
     pub supervisor: Arc<RwLock<Supervisor>>,
-    pub event_actor: EventSinkActor,
-    pub metrics: Arc<RwLock<MetricRegistry>>,
     pub return_state: Option<State>,
 }
 
@@ -156,13 +152,6 @@ impl<'a> Worker<'a> {
             }
         }
 
-        let event_actor = wonder::actor::Builder::new(EventSink)
-            .name("event-sink".to_string())
-            .start(())
-            .unwrap();
-
-        let metrics = Arc::new(RwLock::new(MetricRegistry::new()));
-
         let gossip_server = gossip::server::Server::new(String::from(config.gossip_listen_ip()),
                                                         config.gossip_listen_port(),
                                                         config.gossip_permanent(),
@@ -171,8 +160,7 @@ impl<'a> Worker<'a> {
                                                         config.group().to_string(),
                                                         config.organization().clone(),
                                                         Some(package_exposes),
-                                                        package_port,
-                                                        metrics.clone());
+                                                        package_port);
 
         try!(gossip_server.start_inbound());
         try!(gossip_server.initial_peers(config.gossip_peer()));
@@ -192,6 +180,7 @@ impl<'a> Worker<'a> {
         let service_config_lock_1 = service_config_lock.clone();
 
         let supervisor = Arc::new(RwLock::new(Supervisor::new(package_ident, runtime_config)));
+
         let sidecar_ml = gossip_server.member_list.clone();
         let sidecar_rl = gossip_server.rumor_list.clone();
         let sidecar_cl = gossip_server.census_list.clone();
@@ -226,8 +215,6 @@ impl<'a> Worker<'a> {
                                                    sidecar_gfl),
             supervisor: supervisor,
             pkg_updater: pkg_updater,
-            event_actor: event_actor,
-            metrics: metrics,
             return_state: None,
         })
     }
@@ -242,10 +229,6 @@ impl<'a> Worker<'a> {
         let package = self.package.read().unwrap();
         try!(package.copy_run(&service_config));
         Ok(())
-    }
-
-    pub fn send_event(&self, event: HabEvent) {
-        self.event_actor.cast(EventMessage::Event(event));
     }
 }
 
@@ -269,7 +252,6 @@ impl<'a> Worker<'a> {
 fn run_internal<'a>(sm: &mut StateMachine<State, Worker<'a>, SupError>,
                     worker: &mut Worker<'a>)
                     -> Result<()> {
-
     {
         let package = worker.package.read().unwrap();
         let service_config = worker.service_config.read().unwrap();
