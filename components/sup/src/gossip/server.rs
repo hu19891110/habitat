@@ -27,7 +27,7 @@ use std::thread;
 use std::ops::Deref;
 use std::time::Duration;
 use std::sync::{Arc, RwLock};
-use std::net;
+use std::net::{self, UdpSocket};
 
 use time;
 use utp::{UtpListener, UtpSocket};
@@ -164,7 +164,7 @@ impl Server {
         let detector = self.detector.clone();
         let el = self.election_list.clone();
         let gfl = self.gossip_file_list.clone();
-        let listener = try!(UtpListener::bind(&self.listen[..]));
+        let listener = try!(UdpSocket::bind(&self.listen[..]));
         let metrics = self.metrics.clone();
         let _t = thread::Builder::new()
             .name("inbound".to_string())
@@ -261,7 +261,7 @@ impl Server {
 /// INBOUND_MAX_THREADS concurrent requests.
 ///
 /// New requests are handled by passing them to `receive`.
-pub fn inbound(listener: UtpListener,
+pub fn inbound(listener: UdpSocket,
                ring_key: Arc<Option<SymKey>>,
                my_peer: Peer,
                member_list: Arc<RwLock<MemberList>>,
@@ -273,21 +273,17 @@ pub fn inbound(listener: UtpListener,
                metrics: Arc<RwLock<MetricRegistry>>) {
 
     let mut pool = ThreadPool::new(INBOUND_MAX_THREADS);
-    for connection in listener.incoming() {
 
-        //{
-        //    let avg = metrics.read().unwrap().window_avg(Window::UTPReceiveTime);
-        //    println!("Average = {}", avg);
-        //    if avg > 1_000_000_000 && !tweaked{
-        //        println!("Detected a slow thread, bumping up pool size");
-        //        let new_count = pool.active_count() * 2;
-        //        pool.set_num_threads(new_count);
-        //        tweaked = true;
-        //    }
-        //}
-
+    // set_read_timeout
+    // set_write_timeout
+    loop {
+        let mut buf = [0; 65507];
+        let (amt, src) = try!(listener.recv_from(buf));
+        println!("READ {} bytes from UDP connection {:?}", &amt, &src);
         let mut tweaked = false;
         let mut sleeps = 0;
+
+        // check thread pool
         loop {
             println!("ACTIVE/MAX = {}/{}", pool.active_count(), pool.max_count());
 
@@ -301,8 +297,10 @@ pub fn inbound(listener: UtpListener,
                 break;
             }
         }
+
+        /*
         match connection {
-            Ok((socket, src)) => {
+            Ok((amt, src)) => {
                 debug!("Inbound connection from {:?}; {} of {} slots used",
                        src,
                        pool.active_count(),
@@ -317,10 +315,14 @@ pub fn inbound(listener: UtpListener,
                 let el = election_list.clone();
                 let gfl = gossip_file_list.clone();
                 let metrics = metrics.clone();
+
+                let response_socket = try!(UdpSocket::bind(""));
+
                 pool.execute(move || receive(socket, src, key, my_peer, ml, rl, cl, d1, el, gfl, metrics));
             }
             _ => {}
         }
+        */
     }
 }
 
@@ -343,7 +345,7 @@ pub fn inbound(listener: UtpListener,
 /// ## PingReq(Peer, RumorList)
 /// * Create a connection to the requested Peer
 /// * Forward along the RumorList to that Peer as a Proxy Ping.
-fn receive(mut socket: UtpSocket,
+fn receive(mut socket: UdpSocket,
            src: net::SocketAddr,
            ring_key: Arc<Option<SymKey>>,
            my_peer: Peer,
